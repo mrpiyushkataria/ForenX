@@ -129,4 +129,54 @@ function updateActivityChart(stats) {
             scales: {
                 x: {
                     grid: {
-                        color: 'rgba(255, 255, 255, 0.
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    ticks: {
+                        color: '#cbd5e1'
+                    }
+                },
+                y: {
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    ticks: {
+                        color: '#cbd5e1'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// File upload drag and drop
+document.addEventListener('DOMContentLoaded', function() {
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('logFile');
+    
+    uploadArea.addEventListener('click', () => fileInput.click());
+    
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.style.borderColor = '#60a5fa';
+        uploadArea.style.background = 'rgba(96, 165, 250, 0.1)';
+    });
+    
+    uploadArea.addEventListener('dragleave', () => {
+        uploadArea.style.borderColor = '#475569';
+        uploadArea.style.background = '';
+    });
+    
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.style.borderColor = '#475569';
+        uploadArea.style.background = '';
+        
+        if (e.dataTransfer.files.length) {
+            fileInput.files = e.dataTransfer.files;
+            uploadLog();
+        }
+    });
+    
+    // Initial data load
+    fetchSystemStats();
+});
