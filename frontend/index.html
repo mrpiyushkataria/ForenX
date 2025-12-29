@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ForenX-Sentinel Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <header>
+        <h1><span class="logo">🕵️</span> ForenX-Sentinel</h1>
+        <p>Digital Forensics & Incident Response Dashboard</p>
+    </header>
+    
+    <main>
+        <section class="dashboard-cards">
+            <div class="card">
+                <h3>📈 Total Logs Processed</h3>
+                <div class="value" id="totalLogs">0</div>
+            </div>
+            <div class="card high-risk">
+                <h3>🚨 High-Risk Endpoints</h3>
+                <div class="value" id="highRiskEndpoints">0</div>
+            </div>
+            <div class="card">
+                <h3>🌍 Unique IPs</h3>
+                <div class="value" id="uniqueIPs">0</div>
+            </div>
+            <div class="card">
+                <h3>📊 Data Volume</h3>
+                <div class="value" id="dataVolume">0 MB</div>
+            </div>
+        </section>
+        
+        <section class="upload-section">
+            <h2>📁 Upload Log Files</h2>
+            <div class="upload-area" id="uploadArea">
+                <p>Drag & drop log files or click to browse</p>
+                <input type="file" id="logFile" accept=".log,.txt">
+                <div class="log-type-selector">
+                    <label>Log Type:</label>
+                    <select id="logType">
+                        <option value="nginx">Nginx</option>
+                        <option value="apache">Apache</option>
+                        <option value="mysql">MySQL</option>
+                        <option value="php">PHP</option>
+                    </select>
+                </div>
+                <button onclick="uploadLog()">Analyze Logs</button>
+            </div>
+            <div id="uploadResult"></div>
+        </section>
+        
+        <section class="analysis-section">
+            <h2>🔍 Endpoint Risk Analysis</h2>
+            <div class="table-container">
+                <table id="endpointsTable">
+                    <thead>
+                        <tr>
+                            <th>Endpoint</th>
+                            <th>Hits</th>
+                            <th>Unique IPs</th>
+                            <th>Data Volume</th>
+                            <th>Risk Score</th>
+                            <th>Risk Level</th>
+                        </tr>
+                    </thead>
+                    <tbody id="endpointsBody">
+                        <!-- Data will be populated by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        
+        <section class="chart-section">
+            <h2>📊 Activity Timeline</h2>
+            <canvas id="activityChart" width="800" height="300"></canvas>
+        </section>
+    </main>
+    
+    <script src="dashboard.js"></script>
+</body>
+</html>
