@@ -57,17 +57,21 @@ check_dependencies() {
 setup_environment() {
     log_info "Setting up $ENV environment..."
     
-    # Create environment file if it doesn't exist
-    if [ ! -f .env ]; then
-        log_warn ".env file not found, creating from template..."
-        cp .env.example .env
-        
-        # Generate secure secrets
-        if [ "$ENV" = "production" ]; then
-            sed -i "s/SECRET_KEY=.*/SECRET_KEY=$(openssl rand -hex 32)/" .env
-            sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=$(openssl rand -hex 16)/" .env
-            sed -i "s/GRAFANA_PASSWORD=.*/GRAFANA_PASSWORD=$(openssl rand -hex 16)/" .env
-        fi
+# In the setup_environment function, replace:
+if [ ! -f .env ]; then
+    log_warn ".env file not found, creating from template..."
+    cp .env.example .env
+    
+    # Generate secure secrets if .env.example doesn't exist
+    if [ ! -f .env.example ]; then
+        log_warn ".env.example not found, creating from scratch..."
+        cat > .env.example << 'EOF'
+# Copy this to .env and update values
+DB_PASSWORD=ChangeThisPassword123!
+SECRET_KEY=YourSecretKeyHereChangeInProduction
+GRAFANA_PASSWORD=admin
+EOF
+    fi
         
         log_warn "Please edit .env file with your configuration"
         read -p "Press enter to continue after editing .env file..."
