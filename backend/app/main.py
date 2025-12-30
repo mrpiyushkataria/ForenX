@@ -1,14 +1,13 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse
 from typing import List, Dict, Optional
 import uvicorn
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import defaultdict, Counter
 import json
-from enum import Enum
 
 app = FastAPI(
     title="ForenX Sentinel",
@@ -27,304 +26,142 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory storage for demo (replace with database in production)
+# In-memory storage for demo
 log_store = []
 threat_analysis = []
-attack_patterns = []
 
-class ThreatLevel(Enum):
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INFO = "info"
+# ========== SIMPLIFIED LOG PARSING ==========
 
-class AttackType(Enum):
-    SQL_INJECTION = "sql_injection"
-    XSS = "cross_site_scripting"
-    BRUTE_FORCE = "brute_force"
-    DIRECTORY_SCAN = "directory_scan"
-    GIT_EXPOSURE = "git_exposure"
-    PORT_SCAN = "port_scan"
-    DATA_EXFILTRATION = "data_exfiltration"
-    SCANNER = "vulnerability_scanner"
-
-# ========== LOG PARSING ENGINE ==========
-
-def parse_nginx_log(line: str) -> Optional[Dict]:
-    """Parse Nginx combined log format"""
-    pattern = r'(\S+) - - \[(.*?)\] "(.*?)" (\d+) (\d+) "(.*?)" "(.*?)"'
-    match = re.match(pattern, line)
-    
-    if match:
-        ip, timestamp, request, status, size, referrer, user_agent = match.groups()
-        
-        # Parse request
-        method, endpoint, protocol = "GET", "/", "HTTP/1.1"
-        if ' ' in request:
-            parts = request.split(' ')
-            if len(parts) >= 3:
-                method, endpoint, protocol = parts[0], parts[1], parts[2]
-        
-        return {
-            "ip": ip,
-            "timestamp": timestamp,
-            "method": method,
-            "endpoint": endpoint,
-            "status": int(status),
-            "size": int(size),
-            "referrer": referrer if referrer != "-" else None,
-            "user_agent": user_agent if user_agent != "-" else None,
-            "raw": line,
-            "source": "nginx"
-        }
-    return None
-
-def parse_apache_log(line: str) -> Optional[Dict]:
-    """Parse Apache combined log format"""
-    pattern = r'(\S+) (\S+) (\S+) \[(.*?)\] "(.*?)" (\d+) (\d+) "(.*?)" "(.*?)"'
-    match = re.match(pattern, line)
-    
-    if match:
-        ip, ident, user, timestamp, request, status, size, referrer, user_agent = match.groups()
-        
-        method, endpoint, protocol = "GET", "/", "HTTP/1.1"
-        if ' ' in request:
-            parts = request.split(' ')
-            if len(parts) >= 3:
-                method, endpoint, protocol = parts[0], parts[1], parts[2]
-        
-        return {
-            "ip": ip,
-            "timestamp": timestamp,
-            "method": method,
-            "endpoint": endpoint,
-            "status": int(status),
-            "size": int(size),
-            "referrer": referrer if referrer != "-" else None,
-            "user_agent": user_agent if user_agent != "-" else None,
-            "raw": line,
-            "source": "apache"
-        }
-    return None
-
-# ========== THREAT DETECTION ENGINE ==========
-
-class ThreatDetector:
-    """Advanced threat detection engine"""
-    
-    # Suspicious patterns
-    SUSPICIOUS_PATTERNS = {
-        "sql_injection": [
-            r"(['\"])?.*(OR|AND|UNION|SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER).*\1",
-            r".*['\"]\s*=\s*['\"]",
-            r".*--.*",
-            r".*;.*",
-            r".*/\*.*\*/.*"
-        ],
-        "xss": [
-            r"<script.*?>.*?</script>",
-            r"javascript:",
-            r"on\w+\s*=",
-            r"alert\(.*?\)",
-            r"<iframe.*?>",
-            r"<img.*?onerror=.*?>"
-        ],
-        "directory_traversal": [
-            r".*\.\./.*",
-            r".*\.\.%2f.*",
-            r".*etc/passwd.*",
-            r".*proc/self.*",
-            r".*\.git/.*",
-            r".*\.env.*",
-            r".*wp-config\.php.*",
-            r".*\.htaccess.*"
-        ],
-        "command_injection": [
-            r".*;\s*\w+.*",
-            r".*\|\s*\w+.*",
-            r".*&\s*\w+.*",
-            r".*\`.*\`.*",
-            r".*\$\("
-        ],
-        "scanners": [
-            r"l9explore",
-            r"l9tcpid",
-            r"sqlmap",
-            r"nikto",
-            r"nessus",
-            r"acunetix",
-            r"wpscan",
-            r"nmap",
-            r"gobuster",
-            r"dirb",
-            r"ffuf"
-        ]
-    }
-    
-    @staticmethod
-    def detect_threats(log_entry: Dict) -> List[Dict]:
-        """Detect threats in a single log entry"""
-        threats = []
-        
-        # Check endpoint for threats
-        endpoint = log_entry.get("endpoint", "")
-        user_agent = log_entry.get("user_agent", "")
-        raw = log_entry.get("raw", "")
-        
-        # Git exposure attempts (from your logs)
-        if ".git/config" in endpoint or ".git/HEAD" in endpoint:
-            threats.append({
-                "type": AttackType.GIT_EXPOSURE.value,
-                "level": ThreatLevel.HIGH.value,
-                "description": "Git repository exposure attempt",
-                "confidence": 0.9,
-                "indicators": ["Git config file access attempt"],
-                "recommendation": "Block .git directory access in web server config"
-            })
-        
-        # Directory scanning
-        suspicious_dirs = [".git", ".env", "wp-admin", "phpmyadmin", "admin", "config", "backup"]
-        if any(dir in endpoint.lower() for dir in suspicious_dirs):
-            threats.append({
-                "type": AttackType.DIRECTORY_SCAN.value,
-                "level": ThreatLevel.MEDIUM.value,
-                "description": "Suspicious directory access",
-                "confidence": 0.7,
-                "indicators": [f"Access to {endpoint}"],
-                "recommendation": "Review access logs and consider blocking"
-            })
-        
-        # Scanner detection
-        for scanner_pattern in ThreatDetector.SUSPICIOUS_PATTERNS["scanners"]:
-            if re.search(scanner_pattern, user_agent, re.IGNORECASE):
-                threats.append({
-                    "type": AttackType.SCANNER.value,
-                    "level": ThreatLevel.MEDIUM.value,
-                    "description": f"Vulnerability scanner detected: {scanner_pattern}",
-                    "confidence": 0.8,
-                    "indicators": [f"User-Agent: {user_agent}"],
-                    "recommendation": "Monitor for further reconnaissance activity"
-                })
-        
-        # SQL Injection patterns
-        for pattern in ThreatDetector.SUSPICIOUS_PATTERNS["sql_injection"]:
-            if re.search(pattern, raw, re.IGNORECASE):
-                threats.append({
-                    "type": AttackType.SQL_INJECTION.value,
-                    "level": ThreatLevel.HIGH.value,
-                    "description": "SQL injection attempt detected",
-                    "confidence": 0.6,
-                    "indicators": ["SQL keywords in request"],
-                    "recommendation": "Implement WAF rules for SQL injection"
-                })
-                break
-        
-        # XSS patterns
-        for pattern in ThreatDetector.SUSPICIOUS_PATTERNS["xss"]:
-            if re.search(pattern, raw, re.IGNORECASE):
-                threats.append({
-                    "type": AttackType.XSS.value,
-                    "level": ThreatLevel.HIGH.value,
-                    "description": "Cross-site scripting attempt detected",
-                    "confidence": 0.7,
-                    "indicators": ["XSS patterns in request"],
-                    "recommendation": "Implement Content Security Policy (CSP)"
-                })
-                break
-        
-        return threats
-    
-    @staticmethod
-    def analyze_behavior(logs: List[Dict]) -> List[Dict]:
-        """Analyze behavioral patterns across multiple logs"""
-        findings = []
-        
-        # Group by IP
-        ip_logs = defaultdict(list)
-        for log in logs:
-            ip_logs[log["ip"]].append(log)
-        
-        # Analyze each IP's behavior
-        for ip, ip_log_entries in ip_logs.items():
-            # Check for scanning behavior (many different endpoints)
-            endpoints = set(log["endpoint"] for log in ip_log_entries)
-            if len(endpoints) > 20:  # More than 20 different endpoints
-                findings.append({
-                    "ip": ip,
-                    "type": "scanning_behavior",
-                    "level": ThreatLevel.MEDIUM.value,
-                    "description": f"IP accessed {len(endpoints)} different endpoints (possible scanning)",
-                    "confidence": 0.75,
-                    "endpoint_count": len(endpoints),
-                    "sample_endpoints": list(endpoints)[:5]
-                })
+def parse_log_line(line: str) -> Optional[Dict]:
+    """Parse common log formats"""
+    try:
+        # Skip empty lines
+        if not line.strip():
+            return None
             
-            # Check for rapid requests (more than 10 requests per minute)
-            if len(ip_log_entries) > 10:
-                timestamps = [log.get("timestamp", "") for log in ip_log_entries]
-                # Simple time analysis - in production, parse timestamps properly
-                if len(ip_log_entries) > 50:
-                    findings.append({
-                        "ip": ip,
-                        "type": "rapid_requests",
-                        "level": ThreatLevel.MEDIUM.value,
-                        "description": f"IP made {len(ip_log_entries)} requests (possible automated tool)",
-                        "confidence": 0.7,
-                        "request_count": len(ip_log_entries)
-                    })
+        # Common log pattern: IP - - [timestamp] "request" status size
+        pattern = r'(\S+) - - \[(.*?)\] "(.*?)" (\d+) (\d+)'
+        match = re.search(pattern, line)
         
-        return findings
-
-# ========== ANALYTICS ENGINE ==========
-
-class AnalyticsEngine:
-    """Generate analytics and insights from logs"""
-    
-    @staticmethod
-    def get_top_ips(logs: List[Dict], limit: int = 10) -> List[Dict]:
-        """Get top IPs by request count"""
-        ip_counter = Counter(log["ip"] for log in logs)
-        return [
-            {"ip": ip, "count": count, "percentage": (count / len(logs)) * 100}
-            for ip, count in ip_counter.most_common(limit)
-        ]
-    
-    @staticmethod
-    def get_top_endpoints(logs: List[Dict], limit: int = 10) -> List[Dict]:
-        """Get top endpoints by request count"""
-        endpoint_counter = Counter(log["endpoint"] for log in logs)
-        return [
-            {"endpoint": endpoint, "count": count}
-            for endpoint, count in endpoint_counter.most_common(limit)
-        ]
-    
-    @staticmethod
-    def get_status_distribution(logs: List[Dict]) -> Dict:
-        """Get HTTP status code distribution"""
-        status_counter = Counter(log["status"] for log in logs)
-        total = len(logs)
-        return {
-            "2xx": sum(count for status, count in status_counter.items() if 200 <= status < 300),
-            "3xx": sum(count for status, count in status_counter.items() if 300 <= status < 400),
-            "4xx": sum(count for status, count in status_counter.items() if 400 <= status < 500),
-            "5xx": sum(count for status, count in status_counter.items() if 500 <= status < 600),
-            "details": {str(k): v for k, v in status_counter.items()}
-        }
-    
-    @staticmethod
-    def get_threat_summary(threats: List[Dict]) -> Dict:
-        """Generate threat summary"""
-        threat_counter = Counter(threat.get("type", "unknown") for threat in threats)
-        level_counter = Counter(threat.get("level", "info") for threat in threats)
+        if match:
+            ip, timestamp, request, status, size = match.groups()
+            
+            # Parse request method and endpoint
+            method = "GET"
+            endpoint = "/"
+            if ' ' in request:
+                parts = request.split(' ')
+                if len(parts) >= 2:
+                    method = parts[0]
+                    endpoint = parts[1]
+            
+            return {
+                "ip": ip,
+                "timestamp": timestamp,
+                "method": method,
+                "endpoint": endpoint,
+                "status": int(status),
+                "size": int(size),
+                "raw": line[:200],  # Store first 200 chars
+                "source": "web",
+                "parsed_at": datetime.now().isoformat()
+            }
         
-        return {
-            "total_threats": len(threats),
-            "by_type": dict(threat_counter),
-            "by_level": dict(level_counter),
-            "critical_count": sum(1 for t in threats if t.get("level") == ThreatLevel.CRITICAL.value),
-            "high_count": sum(1 for t in threats if t.get("level") == ThreatLevel.HIGH.value)
-        }
+        # Try to extract IP and basic info from any line
+        ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
+        ip_match = re.search(ip_pattern, line)
+        if ip_match:
+            return {
+                "ip": ip_match.group(0),
+                "raw": line[:200],
+                "source": "generic",
+                "parsed_at": datetime.now().isoformat()
+            }
+            
+        return None
+        
+    except Exception as e:
+        print(f"Error parsing line: {e}")
+        return None
+
+# ========== SIMPLIFIED THREAT DETECTION ==========
+
+def detect_threats_simple(log_entry: Dict) -> List[Dict]:
+    """Simple threat detection"""
+    threats = []
+    
+    endpoint = log_entry.get("endpoint", "")
+    raw = log_entry.get("raw", "")
+    ip = log_entry.get("ip", "")
+    
+    # Git exposure detection
+    if ".git" in endpoint.lower():
+        threats.append({
+            "type": "git_exposure",
+            "level": "high",
+            "description": "Git repository exposure attempt",
+            "confidence": 0.9,
+            "ip": ip,
+            "endpoint": endpoint
+        })
+    
+    # Config file access
+    config_files = [".env", "config", "wp-config", "settings", ".htaccess"]
+    if any(config in endpoint.lower() for config in config_files):
+        threats.append({
+            "type": "config_access",
+            "level": "medium",
+            "description": "Configuration file access attempt",
+            "confidence": 0.7,
+            "ip": ip,
+            "endpoint": endpoint
+        })
+    
+    # Scanner detection in user-agent (from raw)
+    scanners = ["l9explore", "l9tcpid", "sqlmap", "nikto", "acunetix", "wpscan", "nmap"]
+    if any(scanner in raw.lower() for scanner in scanners):
+        threats.append({
+            "type": "scanner",
+            "level": "medium",
+            "description": "Vulnerability scanner detected",
+            "confidence": 0.8,
+            "ip": ip
+        })
+    
+    # SQL injection patterns
+    sql_patterns = ["' or ", "' and ", "union select", "select * from", "insert into", "drop table"]
+    if any(pattern in raw.lower() for pattern in sql_patterns):
+        threats.append({
+            "type": "sql_injection",
+            "level": "high",
+            "description": "SQL injection attempt",
+            "confidence": 0.6,
+            "ip": ip
+        })
+    
+    # XSS patterns
+    xss_patterns = ["<script", "javascript:", "onerror=", "alert("]
+    if any(pattern in raw.lower() for pattern in xss_patterns):
+        threats.append({
+            "type": "xss",
+            "level": "high",
+            "description": "Cross-site scripting attempt",
+            "confidence": 0.7,
+            "ip": ip
+        })
+    
+    # Directory traversal
+    if "../" in endpoint or "..\\" in endpoint:
+        threats.append({
+            "type": "directory_traversal",
+            "level": "high",
+            "description": "Directory traversal attempt",
+            "confidence": 0.8,
+            "ip": ip,
+            "endpoint": endpoint
+        })
+    
+    return threats
 
 # ========== API ENDPOINTS ==========
 
@@ -333,13 +170,14 @@ async def root():
     return {
         "message": "ForenX Sentinel Forensic Analysis Engine",
         "version": "2.0.0",
+        "status": "operational",
         "endpoints": {
+            "health": "/health",
+            "upload": "POST /api/upload",
             "dashboard": "/api/dashboard",
-            "upload": "/api/upload",
             "threats": "/api/threats",
             "analytics": "/api/analytics",
-            "export": "/api/export",
-            "docs": "/docs"
+            "logs": "/api/logs"
         }
     }
 
@@ -348,64 +186,67 @@ async def health():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "services": {
-            "analysis_engine": "operational",
-            "threat_detection": "operational",
-            "log_parsing": "operational"
-        }
+        "log_count": len(log_store),
+        "threat_count": len(threat_analysis)
     }
 
 @app.post("/api/upload")
 async def upload_log(file: UploadFile = File(...)):
-    """Upload and analyze log file"""
+    """Upload and analyze log file - DEBUGGED VERSION"""
     try:
-        global log_store, threat_analysis, attack_patterns
+        print(f"Starting upload for file: {file.filename}")
         
-        # Read file
+        # Read file content
         content = await file.read()
-        lines = content.decode('utf-8').splitlines()
+        print(f"File size: {len(content)} bytes")
         
-        # Parse logs
+        # Decode content
+        try:
+            text_content = content.decode('utf-8')
+        except UnicodeDecodeError:
+            # Try other encodings
+            for encoding in ['latin-1', 'iso-8859-1', 'cp1252']:
+                try:
+                    text_content = content.decode(encoding)
+                    break
+                except:
+                    continue
+            else:
+                text_content = content.decode('utf-8', errors='ignore')
+        
+        # Split into lines
+        lines = text_content.splitlines()
+        print(f"Total lines: {len(lines)}")
+        
+        # Parse logs (limit to 5000 lines for performance)
         parsed_logs = []
         threats_found = []
         
-        for line in lines[:5000]:  # Limit for demo
+        for i, line in enumerate(lines[:5000]):
+            if i % 1000 == 0 and i > 0:
+                print(f"Parsed {i} lines...")
+            
             if not line.strip():
                 continue
-            
-            log_entry = None
-            
-            # Try different parsers
-            if ' - - [' in line and '] "' in line:
-                log_entry = parse_nginx_log(line) or parse_apache_log(line)
-            
+                
+            log_entry = parse_log_line(line)
             if log_entry:
-                log_entry["id"] = len(log_store) + 1
-                log_entry["upload_time"] = datetime.now().isoformat()
+                log_entry["id"] = len(log_store) + len(parsed_logs) + 1
+                parsed_logs.append(log_entry)
                 
                 # Detect threats
-                entry_threats = ThreatDetector.detect_threats(log_entry)
-                if entry_threats:
-                    for threat in entry_threats:
-                        threat["log_id"] = log_entry["id"]
-                        threat["timestamp"] = datetime.now().isoformat()
-                        threats_found.append(threat)
-                
-                parsed_logs.append(log_entry)
+                threats = detect_threats_simple(log_entry)
+                for threat in threats:
+                    threat["log_id"] = log_entry["id"]
+                    threat["timestamp"] = datetime.now().isoformat()
+                    threat["file"] = file.filename
+                    threats_found.append(threat)
         
-        # Store logs
+        # Store results
         log_store.extend(parsed_logs)
         threat_analysis.extend(threats_found)
         
-        # Behavioral analysis
-        behavior_findings = ThreatDetector.analyze_behavior(parsed_logs)
-        threat_analysis.extend(behavior_findings)
-        
-        # Update attack patterns
-        attack_patterns = list(set(
-            pattern.get("type", "unknown") 
-            for pattern in threats_found + behavior_findings
-        ))
+        print(f"Parsed {len(parsed_logs)} logs, found {len(threats_found)} threats")
         
         return JSONResponse({
             "filename": file.filename,
@@ -413,73 +254,99 @@ async def upload_log(file: UploadFile = File(...)):
             "lines_total": len(lines),
             "lines_parsed": len(parsed_logs),
             "threats_detected": len(threats_found),
-            "behavioral_findings": len(behavior_findings),
-            "message": "Log file analyzed with forensic capabilities",
-            "sample_threats": threats_found[:3] if threats_found else [],
-            "analysis_complete": True
+            "message": "Log file analyzed successfully",
+            "sample_threats": threats_found[:3],
+            "status": "success"
         })
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
+        print(f"ERROR in upload: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Analysis error: {str(e)}"
+        )
 
 @app.get("/api/dashboard")
 async def get_dashboard():
-    """Get comprehensive dashboard data"""
-    analytics = AnalyticsEngine()
-    
-    # Basic stats
-    total_logs = len(log_store)
-    unique_ips = len(set(log.get("ip") for log in log_store))
-    
-    # Threat summary
-    threat_summary = analytics.get_threat_summary(threat_analysis) if threat_analysis else {
-        "total_threats": 0,
-        "by_type": {},
-        "by_level": {},
-        "critical_count": 0,
-        "high_count": 0
-    }
-    
-    # Top data
-    top_ips = analytics.get_top_ips(log_store, 10)
-    top_endpoints = analytics.get_top_endpoints(log_store, 10)
-    status_dist = analytics.get_status_distribution(log_store)
-    
-    # Recent threats
-    recent_threats = threat_analysis[-10:] if threat_analysis else []
-    
-    return {
-        "summary": {
-            "total_logs": total_logs,
-            "unique_ips": unique_ips,
-            "total_threats": threat_summary["total_threats"],
-            "critical_threats": threat_summary["critical_count"],
-            "high_threats": threat_summary["high_count"],
-            "last_updated": datetime.now().isoformat()
-        },
-        "threats": {
-            "summary": threat_summary,
-            "recent": recent_threats,
-            "attack_patterns": attack_patterns
-        },
-        "analytics": {
-            "top_ips": top_ips,
-            "top_endpoints": top_endpoints,
-            "status_distribution": status_dist
-        },
-        "system": {
-            "status": "operational",
-            "version": "2.0.0",
-            "analysis_capabilities": [
-                "SQL Injection Detection",
-                "XSS Detection", 
-                "Directory Scanning",
-                "Git Exposure Detection",
-                "Behavioral Analysis",
-                "Scanner Identification"
-            ]
+    """Get dashboard data"""
+    try:
+        # Basic counts
+        total_logs = len(log_store)
+        unique_ips = len(set(log.get("ip") for log in log_store if log.get("ip")))
+        
+        # Threat counts by level
+        threat_counts = {
+            "critical": sum(1 for t in threat_analysis if t.get("level") == "critical"),
+            "high": sum(1 for t in threat_analysis if t.get("level") == "high"),
+            "medium": sum(1 for t in threat_analysis if t.get("level") == "medium"),
+            "low": sum(1 for t in threat_analysis if t.get("level") == "low"),
+            "total": len(threat_analysis)
         }
-    }
+        
+        # Top IPs
+        ip_counter = Counter(log.get("ip") for log in log_store if log.get("ip"))
+        top_ips = [{"ip": ip, "count": count} for ip, count in ip_counter.most_common(10)]
+        
+        # Top endpoints
+        endpoint_counter = Counter(log.get("endpoint") for log in log_store if log.get("endpoint"))
+        top_endpoints = [{"endpoint": ep, "count": count} for ep, count in endpoint_counter.most_common(10)]
+        
+        # Status distribution
+        status_counter = Counter(log.get("status") for log in log_store if log.get("status"))
+        status_dist = {
+            "2xx": sum(count for status, count in status_counter.items() if 200 <= status < 300),
+            "3xx": sum(count for status, count in status_counter.items() if 300 <= status < 400),
+            "4xx": sum(count for status, count in status_counter.items() if 400 <= status < 500),
+            "5xx": sum(count for status, count in status_counter.items() if 500 <= status < 600),
+            "details": {str(k): v for k, v in status_counter.items()}
+        }
+        
+        # Recent threats (last 10)
+        recent_threats = threat_analysis[-10:] if threat_analysis else []
+        
+        return {
+            "summary": {
+                "total_logs": total_logs,
+                "unique_ips": unique_ips,
+                "total_threats": threat_counts["total"],
+                "critical_threats": threat_counts["critical"],
+                "high_threats": threat_counts["high"],
+                "medium_threats": threat_counts["medium"],
+                "low_threats": threat_counts["low"],
+                "last_updated": datetime.now().isoformat()
+            },
+            "analytics": {
+                "top_ips": top_ips,
+                "top_endpoints": top_endpoints,
+                "status_distribution": status_dist
+            },
+            "threats": {
+                "recent": recent_threats,
+                "counts": threat_counts
+            },
+            "system": {
+                "status": "operational",
+                "version": "2.0.0",
+                "memory_usage": {
+                    "logs": total_logs,
+                    "threats": len(threat_analysis)
+                }
+            }
+        }
+        
+    except Exception as e:
+        print(f"Error in dashboard: {e}")
+        return {
+            "summary": {
+                "total_logs": 0,
+                "unique_ips": 0,
+                "total_threats": 0,
+                "last_updated": datetime.now().isoformat()
+            },
+            "error": str(e)
+        }
 
 @app.get("/api/threats")
 async def get_threats(
@@ -487,160 +354,141 @@ async def get_threats(
     type: Optional[str] = None,
     limit: int = 50
 ):
-    """Get threat findings with filtering"""
-    filtered = threat_analysis.copy()
-    
-    if level:
-        filtered = [t for t in filtered if t.get("level") == level]
-    
-    if type:
-        filtered = [t for t in filtered if t.get("type") == type]
-    
-    return {
-        "count": len(filtered),
-        "threats": filtered[-limit:],
-        "filters_applied": {
-            "level": level,
-            "type": type
+    """Get threats with filtering"""
+    try:
+        filtered = threat_analysis.copy()
+        
+        if level:
+            filtered = [t for t in filtered if t.get("level") == level]
+        
+        if type:
+            filtered = [t for t in filtered if t.get("type") == type]
+        
+        return {
+            "count": len(filtered),
+            "threats": filtered[-limit:],
+            "filters": {
+                "level": level,
+                "type": type
+            }
         }
-    }
+    except Exception as e:
+        return {"error": str(e), "threats": []}
 
 @app.get("/api/analytics")
 async def get_analytics():
-    """Get detailed analytics"""
-    analytics = AnalyticsEngine()
-    
-    return {
-        "top_ips": analytics.get_top_ips(log_store, 20),
-        "top_endpoints": analytics.get_top_endpoints(log_store, 20),
-        "status_distribution": analytics.get_status_distribution(log_store),
-        "request_methods": Counter(log.get("method", "UNKNOWN") for log in log_store),
-        "user_agents": Counter(
-            log.get("user_agent", "Unknown")[:50] 
-            for log in log_store 
-            if log.get("user_agent")
-        ).most_common(10),
-        "time_analysis": {
-            "logs_per_hour": min(1000, len(log_store)),  # Simplified for demo
-            "peak_hour": "18:00"  # Would calculate from timestamps
+    """Get analytics data"""
+    try:
+        # IP analysis
+        ip_counter = Counter(log.get("ip") for log in log_store if log.get("ip"))
+        top_ips = [{"ip": ip, "count": count, "percentage": (count/len(log_store))*100 if log_store else 0}
+                  for ip, count in ip_counter.most_common(20)]
+        
+        # Endpoint analysis
+        endpoint_counter = Counter(log.get("endpoint") for log in log_store if log.get("endpoint"))
+        top_endpoints = [{"endpoint": ep, "count": count} 
+                        for ep, count in endpoint_counter.most_common(20)]
+        
+        # Method analysis
+        method_counter = Counter(log.get("method", "UNKNOWN") for log in log_store)
+        
+        # Threat type analysis
+        threat_type_counter = Counter(t.get("type", "unknown") for t in threat_analysis)
+        
+        return {
+            "top_ips": top_ips,
+            "top_endpoints": top_endpoints,
+            "methods": dict(method_counter),
+            "threat_types": dict(threat_type_counter),
+            "total_requests": len(log_store),
+            "analysis_time": datetime.now().isoformat()
         }
-    }
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/api/logs")
 async def get_logs(
     ip: Optional[str] = None,
-    endpoint: Optional[str] = None,
     limit: int = 100
 ):
-    """Get logs with filtering"""
-    filtered = log_store.copy()
-    
-    if ip:
-        filtered = [log for log in filtered if log.get("ip") == ip]
-    
-    if endpoint:
-        filtered = [log for log in filtered if endpoint in log.get("endpoint", "")]
-    
-    return {
-        "count": len(filtered),
-        "logs": filtered[-limit:],
-        "filters": {
-            "ip": ip,
-            "endpoint": endpoint
-        }
-    }
-
-@app.get("/api/export")
-async def export_data(format: str = "json"):
-    """Export data in various formats"""
-    if format == "json":
+    """Get logs with optional IP filter"""
+    try:
+        filtered = log_store.copy()
+        
+        if ip:
+            filtered = [log for log in filtered if log.get("ip") == ip]
+        
         return {
-            "logs": log_store[-1000:],
-            "threats": threat_analysis,
-            "summary": AnalyticsEngine.get_threat_summary(threat_analysis) if threat_analysis else {},
-            "export_time": datetime.now().isoformat()
+            "count": len(filtered),
+            "logs": filtered[-limit:],
+            "filter": {"ip": ip} if ip else None
         }
-    elif format == "csv":
-        # Simplified CSV export
-        csv_lines = ["timestamp,ip,endpoint,status,threat_level,threat_type"]
-        for threat in threat_analysis[-100:]:
-            csv_lines.append(
-                f"{threat.get('timestamp', '')},"
-                f"{threat.get('ip', '')},"
-                f"{threat.get('endpoint', '')},"
-                f"{threat.get('status', '')},"
-                f"{threat.get('level', '')},"
-                f"{threat.get('type', '')}"
-            )
-        return "\n".join(csv_lines)
-    
-    return {"error": "Unsupported format"}
+    except Exception as e:
+        return {"error": str(e), "logs": []}
 
 @app.get("/api/ip/{ip_address}")
-async def get_ip_analysis(ip_address: str):
-    """Get detailed analysis for a specific IP"""
-    ip_logs = [log for log in log_store if log.get("ip") == ip_address]
-    ip_threats = [t for t in threat_analysis if t.get("ip") == ip_address]
-    
-    if not ip_logs:
-        return {"error": "IP not found in logs"}
-    
-    # Analyze IP behavior
-    endpoints = set(log.get("endpoint") for log in ip_logs)
-    statuses = Counter(log.get("status") for log in ip_logs)
-    methods = Counter(log.get("method") for log in ip_logs)
-    
-    # Risk score calculation
-    risk_score = 0
-    risk_factors = []
-    
-    if len(endpoints) > 10:
-        risk_score += 30
-        risk_factors.append(f"Accessed {len(endpoints)} different endpoints")
-    
-    if any(threat.get("level") in ["high", "critical"] for threat in ip_threats):
-        risk_score += 40
-        risk_factors.append("High/critical threats detected")
-    
-    if len(ip_logs) > 100:
-        risk_score += 20
-        risk_factors.append(f"High volume: {len(ip_logs)} requests")
-    
-    risk_level = "low"
-    if risk_score >= 70:
-        risk_level = "critical"
-    elif risk_score >= 50:
-        risk_level = "high"
-    elif risk_score >= 30:
-        risk_level = "medium"
-    
-    return {
-        "ip": ip_address,
-        "analysis": {
-            "total_requests": len(ip_logs),
-            "unique_endpoints": len(endpoints),
-            "first_seen": min(log.get("timestamp", "") for log in ip_logs) if ip_logs else "",
-            "last_seen": max(log.get("timestamp", "") for log in ip_logs) if ip_logs else "",
-            "status_distribution": dict(statuses),
-            "method_distribution": dict(methods),
-            "sample_endpoints": list(endpoints)[:10]
-        },
-        "threats": {
-            "count": len(ip_threats),
-            "list": ip_threats,
-            "by_type": Counter(t.get("type") for t in ip_threats)
-        },
-        "risk_assessment": {
-            "score": risk_score,
-            "level": risk_level,
-            "factors": risk_factors,
-            "recommendations": [
-                "Monitor for further activity" if risk_level in ["low", "medium"] else "Consider blocking IP",
-                "Review accessed endpoints for sensitivity",
-                "Check if IP appears in threat intelligence feeds"
-            ]
+async def analyze_ip(ip_address: str):
+    """Analyze specific IP address"""
+    try:
+        ip_logs = [log for log in log_store if log.get("ip") == ip_address]
+        ip_threats = [t for t in threat_analysis if t.get("ip") == ip_address]
+        
+        if not ip_logs:
+            return {"error": "IP not found in logs"}
+        
+        # Calculate risk score
+        risk_score = 0
+        risk_factors = []
+        
+        if len(ip_logs) > 100:
+            risk_score += 30
+            risk_factors.append(f"High volume: {len(ip_logs)} requests")
+        
+        if len(set(log.get("endpoint") for log in ip_logs if log.get("endpoint"))) > 20:
+            risk_score += 25
+            risk_factors.append("Accessed many different endpoints")
+        
+        if any(t.get("level") in ["high", "critical"] for t in ip_threats):
+            risk_score += 45
+            risk_factors.append("High/critical threats detected")
+        
+        risk_level = "low"
+        if risk_score >= 70:
+            risk_level = "critical"
+        elif risk_score >= 50:
+            risk_level = "high"
+        elif risk_score >= 30:
+            risk_level = "medium"
+        
+        return {
+            "ip": ip_address,
+            "stats": {
+                "total_requests": len(ip_logs),
+                "first_seen": min(log.get("timestamp", "") for log in ip_logs) if ip_logs else "",
+                "last_seen": max(log.get("timestamp", "") for log in ip_logs) if ip_logs else "",
+                "threat_count": len(ip_threats)
+            },
+            "threats": ip_threats[-10:],
+            "risk_assessment": {
+                "score": risk_score,
+                "level": risk_level,
+                "factors": risk_factors,
+                "recommendation": "Monitor activity" if risk_level in ["low", "medium"] else "Consider blocking"
+            }
         }
-    }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/clear")
+async def clear_data():
+    """Clear all data (for testing)"""
+    global log_store, threat_analysis
+    count = len(log_store) + len(threat_analysis)
+    log_store = []
+    threat_analysis = []
+    return {"message": f"Cleared {count} records", "status": "success"}
 
 if __name__ == "__main__":
+    print("Starting ForenX Sentinel on http://0.0.0.0:8000")
+    print("API Documentation: http://localhost:8000/docs")
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
